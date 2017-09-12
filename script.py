@@ -4,6 +4,8 @@ from functools import reduce
 TWELVE_ROOT_TWO = 2 ** (1 / 12)
 Q_NOTE_PHRASE_LEN = 16  # number of times to repeat phrase per quarter note
 
+# TODO: handle legato
+
 
 def get_root(track):
     '''Gets the pitch of the first NoteOn event in a track'''
@@ -20,14 +22,23 @@ def get_ratio(root, pitch):
 
 
 def get_note_info(track):
-    '''Parse (note, length) tuples from a track and return them in a List'''
+    '''
+    Parse (note, length, tick) tuples from a track and return them in a List
+    '''
+    track.relative = True
     notes = []
     tracking = 0  # keep track of elapsed ticks, assume relative
     for i, event in enumerate(track):
         tracking += event.tick
+        # NoteOn events sometimes happen before the previous note's off event,
+        # so filter for that situation.
         if isinstance(event, Events.NoteOnEvent):
+            if i == 0 or (isinstance(track[i - 1], Events.NoteOffEvent)):
+                tick = event.tick
+            else:
+                tick = 0
             duration = find_note_off(tracking, event.pitch, i, track)
-            notes.append((event.pitch, duration))
+            notes.append((event.pitch, duration, tick))
     return notes
 
 
@@ -51,7 +62,7 @@ def find_note_off(start, pitch, i, track):
 
 def fractalize_note(resolution, ratio_fn, track, note_info):
     '''
-    Given a (note, duration) tuple representing a note within the supplied
+    Given a (note, duration, tick) tuple representing a note within the supplied
     track, return a repeated and timestretched version of the track
     representing a fractal version of the note.
     Params:
@@ -59,15 +70,17 @@ def fractalize_note(resolution, ratio_fn, track, note_info):
         ratio_fn: function - function to calculate the relative frequency of the
             note we are fractalizing with regard to the root of a track
         track: mydy.Track - the track we are fractalizing
-        note_info: (number, number) - tuple of (pitch, duration) information.
-            eg (60, 96), would be "middle c for 96 ticks"
+        note_info: (number, number, number) - tuple of (pitch, duration, tick)
+            information, e.g. (60, 96), would be "middle c for 96 ticks"
     Returns a new mydy.Track object
     '''
-    pitch, duration = note_info
+    pitch, duration, tick = note_info
+    print(tick)
     quarter_notes = duration / resolution
     ratio = ratio_fn(pitch)
     qn_len = Q_NOTE_PHRASE_LEN * quarter_notes * ratio
     fract = (track / ratio) ** qn_len
+    fract[0].tick = tick / resolution * track.length * Q_NOTE_PHRASE_LEN
     return fract
 
 
@@ -89,6 +102,7 @@ def fractalize_track(resolution, track):
                      (f_note(note) for note in note_info))
     if endevent is not None:
         fractal.append(endevent)
+    # print(fractal.filter(lambda e: isinstance(e, Events.NoteOnEvent)))
     return header + fractal
 
 
@@ -104,49 +118,15 @@ def split_header_meta_events(track):
 
 
 if __name__ == '__main__':
-    sotw = FileIO.read_midifile('sotw.mid')
+    sotw = FileIO.read_midifile('sotw2.mid')
     sotw_track = sotw[0]
+    print(sotw_track)
 
-    # root = get_root(sotw_track)
-    # notes = get_note_info(sotw_track)
-
-    # # curry helper functions
-    # def ratio_wrt_root(pitch): return get_ratio(root, pitch)
-
-    # def fractalize_sotw_note(note_info): return fractalize_note(
-    #     sotw.resolution, ratio_wrt_root, sotw_track[3:-1], note_info)
-
-    # # sanity check
-    # assert(len(fractalize_sotw_note([60, sotw.resolution * 2])) ==
-    #     (len(sotw_track[3:-1])) * Q_NOTE_PHRASE_LEN * 2), "Incorrect length"
-
-    # fractal = reduce(lambda x, y: x + y, (fractalize_sotw_note(ni).filter(
-    #     lambda e: not isinstance(e, Events.EndOfTrackEvent)) for ni in notes))
     fractal = fractalize_track(sotw.resolution, sotw_track)
-    # header = sotw_track[:3]
-    # header, sotw_track = split_header_meta_events(sotw_track)
-    # endevent = sotw_track[-1]
-    # fractal = header + fractal + Containers.Track([endevent])
-    fractalP = Containers.Pattern(fmt=0, tracks=[fractal])
-    fractalP.resolution = 2 ** 15 - 1
-    # just_root_30 = fractal.filter(lambda e: isinstance(
-    #     e, Events.NoteEvent) and e.pitch)  # == 60)
-    # print(fractalP.resolution, list(sorted(filter(lambda x: x > 1, map(lambda e: e.tick / sotw.resolution, just_root_30)))))
+
+    fractal_pattern = Containers.Pattern(fmt=0, tracks=[fractal])
+    fractal_pattern.resolution = 2 ** 15 - 1
 
     FileIO.write_midifile('test2.mid', Containers.Pattern(
         resolution=sotw.resolution * 1, fmt=sotw.format, tracks=[fractal]))
-    a = FileIO.read_midifile('test2.mid')
-    # a.relative = False
-    a.resolution = 100
-    print(a)
-    print('~~~')
-    just_root = a[0].filter(lambda e: isinstance(
-        e, Events.NoteEvent) and e.pitch == 60)
-    # print(just_root)
-    # ticks = []
-    # for i, e in enumerate(just_root):
-    #     if i:
-    #         ticks.append(e.tick - just_root[i-1].tick)
-    # print(sorted(list(map(lambda t: t / a.resolution, ticks))))
-    # print(fractalP.resolution, list(sorted(filter(lambda x: x > 1, map(lambda e: e.tick / a.resolution, a[0])))))
-    # print(list(filter(lambda t: t[0] == 60, map(lambda t: (t[0], t[1] / a.resolution), get_note_info(a[0])))))
+    # a = FileIO.read_midifile('test2.mid')
