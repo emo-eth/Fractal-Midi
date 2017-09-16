@@ -5,6 +5,7 @@ TWELVE_ROOT_TWO = 2 ** (1 / 12)
 Q_NOTE_PHRASE_LEN = 16  # number of times to repeat phrase per quarter note
 
 # TODO: handle legato
+# TODO: see if sorting fixes tick bug
 
 
 def get_root(track):
@@ -85,6 +86,7 @@ def fractalize_note(resolution, ratio_fn, track, note_info):
 
 
 def fractalize_track(resolution, track):
+    track = sort_ticks(track)
     root = get_root(track)
     note_info = get_note_info(track)
     header, track = split_header_meta_events(track)
@@ -117,8 +119,17 @@ def split_header_meta_events(track):
     return Track(relative=track.relative), track
 
 
+def sort_ticks(track):
+    track = track.make_ticks_abs()
+    events = sorted(track,
+                    key=lambda e: e.tick * 10 +
+                    isinstance(e, Events.NoteOnEvent))
+    track = Containers.Track(events=events, relative=False)
+    track.relative = True
+    return track
+
 if __name__ == '__main__':
-    sotw = FileIO.read_midifile('sotw2.mid')
+    sotw = FileIO.read_midifile('sotw.mid')
     sotw_track = sotw[0]
     print(sotw_track)
 
@@ -127,6 +138,6 @@ if __name__ == '__main__':
     fractal_pattern = Containers.Pattern(fmt=0, tracks=[fractal])
     fractal_pattern.resolution = 2 ** 15 - 1
 
-    FileIO.write_midifile('test2.mid', Containers.Pattern(
+    FileIO.write_midifile('test.mid', Containers.Pattern(
         resolution=sotw.resolution * 1, fmt=sotw.format, tracks=[fractal]))
     # a = FileIO.read_midifile('test2.mid')
