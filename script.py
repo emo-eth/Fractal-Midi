@@ -76,7 +76,6 @@ def fractalize_note(resolution, ratio_fn, track, note_info):
     Returns a new mydy.Track object
     '''
     pitch, duration, tick = note_info
-    print(tick)
     quarter_notes = duration / resolution
     ratio = ratio_fn(pitch)
     qn_len = Q_NOTE_PHRASE_LEN * quarter_notes * ratio
