@@ -4,9 +4,6 @@ from functools import reduce
 TWELVE_ROOT_TWO = 2 ** (1 / 12)
 Q_NOTE_PHRASE_LEN = 16  # number of times to repeat phrase per quarter note
 
-# TODO: handle legato
-# TODO: see if sorting fixes tick bug
-
 
 def get_root(track):
     '''Gets the pitch of the first NoteOn event in a track'''
@@ -24,41 +21,12 @@ def get_ratio(root, pitch):
 
 def get_note_info(track):
     '''
-    Parse (note, length, tick) tuples from a track and return them in a List
+    Parse (note, length, wait) tuples from a track and yield them one at a time
     '''
-    track.relative = True
-    notes = []
-    tracking = 0  # keep track of elapsed ticks, assume relative
     for i, event in enumerate(track):
-        tracking += event.tick
-        # NoteOn events sometimes happen before the previous note's off event,
-        # so filter for that situation.
         if isinstance(event, Events.NoteOnEvent):
-            if i == 0 or (isinstance(track[i - 1], Events.NoteOffEvent)):
-                tick = event.tick
-            else:
-                tick = 0
-            duration = find_note_off(tracking, event.pitch, i, track)
-            notes.append((event.pitch, duration, tick))
-    return notes
-
-
-def find_note_off(start, pitch, i, track):
-    '''
-    Given the absolute starting tick and the pitch of a NoteOn event that
-    happens at index i within a track, find its corresponding NoteOff event.
-    Return the duration of the note as a tick value. Assumes relative tick.
-    '''
-    elapsed = 0
-    # slicing creates a copy, but this is awkward
-    for j in range(i + 1, len(track)):
-        event = track[j]
-        elapsed += event.tick
-        # TODO: support NoteOn velocity = 0
-        if isinstance(event, Events.NoteOffEvent) and event.pitch == pitch:
-            return elapsed
-    # if none is found, assume it should end at the end of the track length.
-    return track.length - start
+            duration = track[i+1].tick
+            yield event.pitch, duration, event.tick
 
 
 def fractalize_note(resolution, ratio_fn, track, note_info):
@@ -78,16 +46,20 @@ def fractalize_note(resolution, ratio_fn, track, note_info):
     pitch, duration, tick = note_info
     quarter_notes = duration / resolution
     ratio = ratio_fn(pitch)
-    qn_len = Q_NOTE_PHRASE_LEN * quarter_notes * ratio
-    fract = (track / ratio) ** qn_len
+    repetitions = Q_NOTE_PHRASE_LEN * quarter_notes * ratio
+    fract = (track / ratio) ** repetitions
     fract[0].tick = tick / resolution * track.length * Q_NOTE_PHRASE_LEN
     return fract
 
 
 def fractalize_track(resolution, track):
+    '''
+    Given a resolution and a track containing a monophonic melody, return a
+    fractalized version of that melody as a new track
+    '''
     track = sort_ticks(track)
     root = get_root(track)
-    note_info = get_note_info(track)
+    note_tuples = get_note_info(track)
     header, track = split_header_meta_events(track)
     endevent = None
     if isinstance(track[-1], Events.EndOfTrackEvent):
@@ -96,15 +68,28 @@ def fractalize_track(resolution, track):
 
     def ratio_wrt_root(pitch): return get_ratio(root, pitch)
 
-    def f_note(note_info): return fractalize_note(resolution, ratio_wrt_root,
-                                                  track, note_info)
+    def f_note(note_tuple): return fractalize_note(resolution, ratio_wrt_root,
+                                                   track, note_tuple)
 
     fractal = reduce(lambda x, y: x + y,
-                     (f_note(note) for note in note_info))
+                     (f_note(note) for note in note_tuples))
     if endevent is not None:
         fractal.append(endevent)
-    # print(fractal.filter(lambda e: isinstance(e, Events.NoteOnEvent)))
+    fractal /= track.length / resolution * Q_NOTE_PHRASE_LEN
+
     return header + fractal
+
+def fix_mary(track):
+    events = []
+    for event in track:
+        if isinstance(event, Events.NoteOnEvent):
+            if event.velocity == 0:
+                events.append(Events.NoteOffEvent(tick=event.tick,
+                              pitch=event.pitch,
+                              velocity=event.velocity))
+                continue
+        events.append(event)
+    return Containers.Track(events=events, relative=track.relative)
 
 
 def split_header_meta_events(track):
@@ -115,28 +100,27 @@ def split_header_meta_events(track):
     for i, event in enumerate(track):
         if not isinstance(event, Events.MetaEvent):
             return track[:i], track[i:]
-    return Track(relative=track.relative), track
+    return Containers.Track(relative=track.relative), track
 
 
 def sort_ticks(track):
+    '''
+    NoteOn events sometimes happen before the previous note's off event, this 
+    sorts the track so NoteEvents are in On, Off order
+    '''
     track = track.make_ticks_abs()
     events = sorted(track,
                     key=lambda e: e.tick * 10 +
                     isinstance(e, Events.NoteOnEvent))
     track = Containers.Track(events=events, relative=False)
-    track.relative = True
-    return track
+    return track.make_ticks_rel()
 
 if __name__ == '__main__':
-    sotw = FileIO.read_midifile('sotw.mid')
-    sotw_track = sotw[0]
-    print(sotw_track)
+    sotw = FileIO.read_midifile('mono_mary.mid')
+    sotw_track = fix_mary(sotw[0])
 
     fractal = fractalize_track(sotw.resolution, sotw_track)
 
-    fractal_pattern = Containers.Pattern(fmt=0, tracks=[fractal])
-    fractal_pattern.resolution = 2 ** 15 - 1
-
-    FileIO.write_midifile('test.mid', Containers.Pattern(
+    FileIO.write_midifile('test3.mid', Containers.Pattern(
         resolution=sotw.resolution * 1, fmt=sotw.format, tracks=[fractal]))
     # a = FileIO.read_midifile('test2.mid')
