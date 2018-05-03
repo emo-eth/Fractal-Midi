@@ -121,6 +121,6 @@ if __name__ == '__main__':
 
     fractal = fractalize_track(sotw.resolution, sotw_track)
 
-    FileIO.write_midifile('test3.mid', Containers.Pattern(
+    FileIO.write_midifile('test.mid', Containers.Pattern(
         resolution=sotw.resolution * 1, fmt=sotw.format, tracks=[fractal]))
     # a = FileIO.read_midifile('test2.mid')
